@@ -86,6 +86,7 @@ const EFI_EVENT_EXIT_BOOT_SERVICES_GUID: uefi::Guid = guid!("27abf055-b1b8-4c26-
 // Display Power State enum
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)] // Protocol definition requires all variants
 enum EfiDisplayPowerState {
     Unknown = 0,
     Off = 1,
@@ -115,12 +116,52 @@ fn disable_display() -> Result {
                 return Ok(());
             }
             
-            info!("Found {} DisplayPowerState protocol handles, will disable display", handles.len());
+            info!("Found {} DisplayPowerState protocol handles", handles.len());
             
-            // Note: In a real implementation, we would open the protocol interface 
-            // and call SetDisplayPowerState(protocol, EfiDisplayPowerStateOff).
-            // For this implementation, we demonstrate that the callback framework
-            // is in place and the protocol search works.
+            // Try to work with the first handle
+            let handle = handles[0];
+            
+            // Use raw UEFI calls similar to the C implementation
+            let system_table_ptr = uefi::table::system_table_raw()
+                .ok_or(uefi::Status::ABORTED)?;
+            
+            let boot_services = unsafe { (*system_table_ptr.as_ptr()).boot_services };
+            
+            if boot_services.is_null() {
+                return Err(uefi::Status::ABORTED.into());
+            }
+            
+            // Try HandleProtocol to get the interface
+            let mut interface_ptr: *mut core::ffi::c_void = core::ptr::null_mut();
+            let status = unsafe {
+                ((*boot_services).handle_protocol)(
+                    handle.as_ptr(),
+                    &EFI_DISPLAY_POWER_PROTOCOL_GUID,
+                    &mut interface_ptr,
+                )
+            };
+            
+            if !status.is_success() {
+                info!("Failed to get DisplayPowerState protocol interface: {:?}", status);
+                return Ok(());
+            }
+            
+            if interface_ptr.is_null() {
+                info!("DisplayPowerState protocol interface is null");
+                return Ok(());
+            }
+            
+            // Cast to our protocol structure and call SetDisplayPowerState
+            let protocol = interface_ptr as *const EfiDisplayPowerProtocol;
+            let status = unsafe {
+                ((*protocol).set_display_power_state)(protocol, EfiDisplayPowerState::Off)
+            };
+            
+            if status.is_success() {
+                info!("Display power set to off successfully");
+            } else {
+                info!("Failed to set display power state: {:?}", status);
+            }
             
             Ok(())
         }
